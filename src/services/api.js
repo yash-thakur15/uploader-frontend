@@ -153,6 +153,50 @@ export const uploadApi = {
     const query = params.toString() ? `?${params.toString()}` : "";
     return apiClient.get(`/api/upload${query}`);
   },
+
+  /**
+   * Initiate a multipart upload
+   * @param {string} fileName - Original filename
+   * @param {string} contentType - MIME type of the file
+   * @param {number} fileSize - File size in bytes
+   * @param {string} userId - User ID (optional)
+   * @returns {Promise<Object>} - Multipart upload data
+   */
+  async initiateMultipartUpload(
+    fileName,
+    contentType,
+    fileSize,
+    userId = "anonymous"
+  ) {
+    return apiClient.post("/api/upload/multipart/initiate", {
+      fileName,
+      contentType,
+      fileSize,
+      userId,
+    });
+  },
+
+  /**
+   * Complete a multipart upload
+   * @param {string} uploadId - Upload ID from multipart initiation
+   * @param {Array} parts - Array of completed parts with ETag and PartNumber
+   * @returns {Promise<Object>} - Upload completion data
+   */
+  async completeMultipartUpload(uploadId, parts) {
+    return apiClient.post("/api/upload/multipart/complete", {
+      uploadId,
+      parts,
+    });
+  },
+
+  /**
+   * Abort a multipart upload
+   * @param {string} uploadId - Upload ID from multipart initiation
+   * @returns {Promise<Object>} - Abort confirmation
+   */
+  async abortMultipartUpload(uploadId) {
+    return apiClient.post("/api/upload/multipart/abort", { uploadId });
+  },
 };
 
 /**
@@ -197,6 +241,89 @@ export const uploadFileToS3 = async (presignedUrl, file, onProgress) => {
     xhr.setRequestHeader("Content-Type", file.type);
     xhr.send(file);
   });
+};
+
+/**
+ * Upload a file part to S3 using presigned URL
+ * @param {string} presignedUrl - The presigned URL for the part
+ * @param {Blob} chunk - The file chunk to upload
+ * @returns {Promise<string>} - The ETag from the response
+ */
+export const uploadPartToS3 = async (presignedUrl, chunk) => {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const etag = xhr.getResponseHeader("ETag");
+        if (etag) {
+          resolve(etag);
+        } else {
+          reject(new Error("No ETag received from S3"));
+        }
+      } else {
+        reject(
+          new Error(
+            `Part upload failed with status ${xhr.status}: ${xhr.statusText}`
+          )
+        );
+      }
+    });
+
+    xhr.addEventListener("error", () => {
+      reject(new Error("Part upload failed due to network error"));
+    });
+
+    xhr.addEventListener("abort", () => {
+      reject(new Error("Part upload was aborted"));
+    });
+
+    xhr.open("PUT", presignedUrl);
+    xhr.send(chunk);
+  });
+};
+
+/**
+ * Upload a large file using multipart upload
+ * @param {File} file - The file to upload
+ * @param {Object} multipartData - Multipart upload data from backend
+ * @param {Function} onProgress - Progress callback
+ * @returns {Promise<Array>} - Array of completed parts
+ */
+export const uploadMultipartFile = async (file, multipartData, onProgress) => {
+  const { partUrls, partSize } = multipartData;
+  const completedParts = [];
+  let uploadedBytes = 0;
+
+  for (let i = 0; i < partUrls.length; i++) {
+    const partUrl = partUrls[i];
+    const start = i * partSize;
+    const end = Math.min(start + partSize, file.size);
+    const chunk = file.slice(start, end);
+
+    try {
+      const etag = await uploadPartToS3(partUrl.presignedUrl, chunk);
+
+      completedParts.push({
+        PartNumber: partUrl.partNumber,
+        ETag: etag,
+      });
+
+      uploadedBytes += chunk.size;
+
+      if (onProgress) {
+        const progress = Math.round((uploadedBytes / file.size) * 100);
+        onProgress(progress);
+      }
+    } catch (error) {
+      console.error(`Failed to upload part ${partUrl.partNumber}:`, error);
+      throw new Error(
+        `Failed to upload part ${partUrl.partNumber}: ${error.message}`
+      );
+    }
+  }
+
+  return completedParts;
 };
 
 export default apiClient;

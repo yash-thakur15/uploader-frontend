@@ -1,6 +1,6 @@
 import "./App.css";
 import { useRef, useState, useEffect } from "react";
-import { uploadApi, uploadFileToS3 } from "./services/api";
+import { uploadApi, uploadFileToS3, uploadMultipartFile } from "./services/api";
 
 function App() {
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -79,51 +79,118 @@ function App() {
     setDownloadUrl(null);
 
     try {
-      // Step 1: Generate presigned URL
+      // Determine if we should use multipart upload (files > 100MB)
+      const MULTIPART_THRESHOLD = 100 * 1024 * 1024; // 100MB
+      const useMultipart = file.size > MULTIPART_THRESHOLD;
+
       console.log(
-        "Generating presigned URL for:",
+        `Processing ${useMultipart ? "multipart" : "single"} upload for:`,
         file.name,
         file.type,
         `${(file.size / (1024 * 1024)).toFixed(1)}MB`
       );
-      const urlResponse = await uploadApi.generatePresignedUrl(
-        file.name,
-        file.type,
-        "demo-user",
-        file.size
-      );
 
-      console.log("Presigned URL response:", urlResponse);
+      if (useMultipart) {
+        // Multipart upload flow
+        setStatus("initiating-multipart");
 
-      if (!urlResponse.success) {
-        throw new Error("Failed to generate presigned URL");
-      }
+        // Step 1: Initiate multipart upload
+        console.log("Initiating multipart upload...");
+        const multipartResponse = await uploadApi.initiateMultipartUpload(
+          file.name,
+          file.type,
+          file.size,
+          "demo-user"
+        );
 
-      const { uploadId: newUploadId, presignedUrl } = urlResponse.data;
-      setUploadId(newUploadId);
-      setStatus("uploading");
+        console.log("Multipart initiation response:", multipartResponse);
 
-      // Step 2: Upload file to S3
-      console.log("Uploading file to S3...");
-      await uploadFileToS3(presignedUrl, file, (progress) => {
-        setUploadProgress(progress);
-      });
+        if (!multipartResponse.success) {
+          throw new Error("Failed to initiate multipart upload");
+        }
 
-      console.log("File uploaded successfully");
-      setStatus("confirming");
+        const {
+          uploadId: newUploadId,
+          partUrls,
+          partSize,
+        } = multipartResponse.data;
+        setUploadId(newUploadId);
+        setStatus("uploading-parts");
 
-      // Step 3: Confirm upload with backend
-      console.log("Confirming upload with backend...");
-      const confirmResponse = await uploadApi.confirmUpload(newUploadId);
+        // Step 2: Upload all parts
+        console.log(`Uploading ${partUrls.length} parts...`);
+        const completedParts = await uploadMultipartFile(
+          file,
+          { partUrls, partSize },
+          (progress) => {
+            setUploadProgress(progress);
+          }
+        );
 
-      console.log("Upload confirmation response:", confirmResponse);
+        console.log("All parts uploaded successfully");
+        setStatus("completing-multipart");
 
-      if (confirmResponse.success) {
-        setStatus("done");
-        setDownloadUrl(confirmResponse.data.downloadUrl);
-        console.log("Upload completed successfully!");
+        // Step 3: Complete multipart upload
+        console.log("Completing multipart upload...");
+        const completeResponse = await uploadApi.completeMultipartUpload(
+          newUploadId,
+          completedParts
+        );
+
+        console.log("Multipart completion response:", completeResponse);
+
+        if (completeResponse.success) {
+          setStatus("done");
+          setDownloadUrl(completeResponse.data.downloadUrl);
+          console.log("Multipart upload completed successfully!");
+        } else {
+          throw new Error("Failed to complete multipart upload");
+        }
       } else {
-        throw new Error("Failed to confirm upload");
+        // Single upload flow (existing logic)
+        setStatus("generating-url");
+
+        // Step 1: Generate presigned URL
+        console.log("Generating presigned URL...");
+        const urlResponse = await uploadApi.generatePresignedUrl(
+          file.name,
+          file.type,
+          "demo-user",
+          file.size
+        );
+
+        console.log("Presigned URL response:", urlResponse);
+
+        if (!urlResponse.success) {
+          throw new Error("Failed to generate presigned URL");
+        }
+
+        const { uploadId: newUploadId, presignedUrl } = urlResponse.data;
+        setUploadId(newUploadId);
+        setStatus("uploading");
+
+        // Step 2: Upload file to S3
+        console.log("Uploading file to S3...");
+        await uploadFileToS3(presignedUrl, file, (progress) => {
+          setUploadProgress(progress);
+        });
+
+        console.log("File uploaded successfully");
+        setStatus("confirming");
+
+        // Step 3: Confirm upload with backend
+        console.log("Confirming upload with backend...");
+        const confirmResponse = await uploadApi.confirmUpload(newUploadId);
+
+        console.log("Upload confirmation response:", confirmResponse);
+
+        if (confirmResponse.success) {
+          setStatus("done");
+          setDownloadUrl(confirmResponse.data.downloadUrl);
+          console.log("Upload completed successfully!");
+        } else {
+          throw new Error("Failed to confirm upload");
+        }
       }
     } catch (error) {
       console.error("Upload failed:", error);
@@ -263,6 +330,12 @@ function App() {
               >
                 {status === "generating-url"
                   ? "Generating URL..."
+                  : status === "initiating-multipart"
+                  ? "Initiating multipart upload..."
+                  : status === "uploading-parts"
+                  ? "Uploading parts..."
+                  : status === "completing-multipart"
+                  ? "Completing multipart upload..."
                   : status === "confirming"
                   ? "Confirming..."
                   : status}
