@@ -61,7 +61,7 @@ function App() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
       <div className="w-full max-w-2xl bg-white rounded-2xl shadow-md p-8">
-        <h1 className="text-2xl font-semibold mb-4">Video Uploader</h1>
+        <h1 className="text-2xl font-semibold mb-4">🎞️ Video Uploader</h1>
 
         <div
           onDrop={onDrop}
@@ -83,8 +83,25 @@ function App() {
 
         <div className="mt-6">
           <div className="flex justify-between text-sm">
-            <span className="text-gray-500">Status: {status}</span>
-            <span className="text-gray-500">File: {fileName || "—"}</span>
+            <span className="text-gray-500">
+              Status:{" "}
+              <span
+                className={`${
+                  status === "idle"
+                    ? "text-blue-600"
+                    : status === "error"
+                    ? "text-red-600"
+                    : status === "done"
+                    ? "text-green-600"
+                    : "text-yellow-600"
+                }`}
+              >
+                {status}
+              </span>
+            </span>
+            <span className="text-gray-500" title={fileName}>
+              File: {fileName || "-"}
+            </span>
           </div>
           <div className="mt-3 h-4 bg-gray-100 rounded overflow-hidden">
             <div
