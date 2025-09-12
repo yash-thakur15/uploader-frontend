@@ -62,14 +62,17 @@ function App() {
       return;
     }
 
-    // Validate file size (30GB limit)
-    const maxFileSize = 30 * 1024 * 1024 * 1024; // 30GB in bytes
-    if (file.size > maxFileSize) {
-      const fileSizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(1);
-      alert(
-        `File size ${fileSizeGB}GB exceeds the maximum allowed size of 30GB. Please select a smaller file.`
-      );
-      return;
+    // Validate file size (skip validation for video files - no upper limit)
+    const isVideoFile = file.type.startsWith("video/");
+    if (!isVideoFile) {
+      const maxFileSize = 30 * 1024 * 1024 * 1024; // 30GB in bytes for non-video files
+      if (file.size > maxFileSize) {
+        const fileSizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(1);
+        alert(
+          `File size ${fileSizeGB}GB exceeds the maximum allowed size of 30GB. Please select a smaller file.`
+        );
+        return;
+      }
     }
 
     setFileName(file.name);
@@ -79,8 +82,8 @@ function App() {
     setDownloadUrl(null);
 
     try {
-      // Determine if we should use multipart upload (files > 100MB)
-      const MULTIPART_THRESHOLD = 100 * 1024 * 1024; // 100MB
+      // Determine if we should use multipart upload (files > 50MB)
+      const MULTIPART_THRESHOLD = 50 * 1024 * 1024; // 50MB
       const useMultipart = file.size > MULTIPART_THRESHOLD;
 
       console.log(
